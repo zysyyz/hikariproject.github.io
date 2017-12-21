@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    
+<meta charset="UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+
+
+<meta http-equiv="Cache-Control" content="no-transform" />
+<meta http-equiv="Cache-Control" content="no-siteapp" />
+
+<meta name="theme-color" content="#f8f5ec" />
+<meta name="msapplication-navbutton-color" content="#f8f5ec">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="#f8f5ec">
+
+
+
+  <meta name="description" content="AntiDebugging Implementation Notes"/>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  <link rel="alternate" href="/default" title="Hikari">
+
+
+
+
+  <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=2.6.0" />
+
+
+
+<link rel="canonical" href="http://hikariproject.github.io/2017/12/21/AntiDebuggingImplementation/"/>
+
+
+<link rel="stylesheet" type="text/css" href="/css/style.css?v=2.6.0" />
+
+
+
+
+
+
+  
+
+
+
+  <script id="baidu_push">
+(function(){
+    var bp = document.createElement('script');
+    var curProtocol = window.location.protocol.split(':')[0];
+    if (curProtocol === 'https') {
+        bp.src = 'https://zz.bdstatic.com/linksubmit/push.js';
+    }
+    else {
+        bp.src = 'http://push.zhanzhang.baidu.com/push.js';
+    }
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(bp, s);
+})();
+</script>
+
+
+
+
+
+
+
+
+
+    <title> AntiDebugging Implementation Notes - Hikari </title>
+  </head>
+
+  <body><div id="mobile-navbar" class="mobile-navbar">
+  <div class="mobile-header-logo">
+    <a href="/." class="logo">Hikari</a>
+  </div>
+  <div class="mobile-navbar-icon">
+    <span></span>
+    <span></span>
+    <span></span>
+  </div>
+</div>
+
+<nav id="mobile-menu" class="mobile-menu slideout-menu">
+  <ul class="mobile-menu-list">
+    
+      <a href="/">
+        <li class="mobile-menu-item">
+          
+          
+            Home
+          
+        </li>
+      </a>
+    
+      <a href="/archives/">
+        <li class="mobile-menu-item">
+          
+          
+            Archives
+          
+        </li>
+      </a>
+    
+  </ul>
+</nav>
+
+    <div class="container" id="mobile-panel">
+      <header id="header" class="header"><div class="logo-wrapper">
+  <a href="/." class="logo">Hikari</a>
+</div>
+
+<nav class="site-navbar">
+  
+    <ul id="menu" class="menu">
+      
+        <li class="menu-item">
+          <a class="menu-item-link" href="/">
+            
+            
+              Home
+            
+          </a>
+        </li>
+      
+        <li class="menu-item">
+          <a class="menu-item-link" href="/archives/">
+            
+            
+              Archives
+            
+          </a>
+        </li>
+      
+    </ul>
+  
+</nav>
+
+      </header>
+
+      <main id="main" class="main">
+        <div class="content-wrapper">
+          <div id="content" class="content">
+            
+  
+  <article class="post">
+    <header class="post-header">
+      <h1 class="post-title">
+        
+          AntiDebugging Implementation Notes
+        
+      </h1>
+
+      <div class="post-meta">
+        <span class="post-time">
+          2017-12-21
+        </span>
+        
+        
+      </div>
+    </header>
+
+    
+    
+  <div class="post-toc" id="post-toc">
+    <h2 class="post-toc-title">Contents</h2>
+    <div class="post-toc-content">
+      <ol class="toc"><li class="toc-item toc-level-4"><a class="toc-link" href="#Code-Stolen-From-AloneMonkey"><span class="toc-text">Code Stolen From @AloneMonkey</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#Ideas-from-jmpews"><span class="toc-text">Ideas from @jmpews</span></a></li></ol>
+    </div>
+  </div>
+
+
+    <div class="post-content">
+      
+        <p>The current implementation of AntiDebugging is simply inject Inline Assemblies at function start and only works on iOS.<br>Since it’s now possible to do sysent hook on (certain versions of) iOS. Inline <code>ptrace()</code> alone is no longer safe.<br>Here is a few more ideas to be implemented.</p>
+<h4 id="Code-Stolen-From-AloneMonkey"><a href="#Code-Stolen-From-AloneMonkey" class="headerlink" title="Code Stolen From @AloneMonkey"></a>Code Stolen From @AloneMonkey</h4><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">BOOL isDebuggerPresent()&#123;</span><br><span class="line">    int name[4];             </span><br><span class="line"></span><br><span class="line">    struct kinfo_proc info;</span><br><span class="line">    size_t info_size = sizeof(info);</span><br><span class="line"></span><br><span class="line">    info.kp_proc.p_flag = 0;</span><br><span class="line"></span><br><span class="line">    name[0] = CTL_KERN;</span><br><span class="line">    name[1] = KERN_PROC;</span><br><span class="line">    name[2] = KERN_PROC_PID;</span><br><span class="line">    name[3] = getpid();         </span><br><span class="line"></span><br><span class="line">    if(sysctl(name, 4, &amp;info, &amp;info_size, NULL, 0) == -1)&#123;</span><br><span class="line">        NSLog(@&quot;sysctl error ...&quot;);</span><br><span class="line">        return NO;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    return ((info.kp_proc.p_flag &amp; P_TRACED) != 0);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGSTOP, 0, dispatch_get_main_queue());</span><br><span class="line">dispatch_source_set_event_handler(source, ^&#123;</span><br><span class="line">    NSLog(@&quot;SIGSTOP!!!&quot;);</span><br><span class="line">    exit(0);</span><br><span class="line">&#125;);</span><br><span class="line">dispatch_resume(source);</span><br></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">struct macosx_exception_info&#123;</span><br><span class="line">    exception_mask_t masks[EXC_TYPES_COUNT];</span><br><span class="line">    mach_port_t ports[EXC_TYPES_COUNT];</span><br><span class="line">    exception_behavior_t behaviors[EXC_TYPES_COUNT];</span><br><span class="line">    thread_state_flavor_t flavors[EXC_TYPES_COUNT];</span><br><span class="line">    mach_msg_type_number_t cout;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">struct macosx_exception_info *info = malloc(sizeof(struct macosx_exception_info));</span><br><span class="line">task_get_exception_ports(mach_task_self(),</span><br><span class="line">                                            EXC_MASK_ALL,</span><br><span class="line">                                            info-&gt;masks,</span><br><span class="line">                                            &amp;info-&gt;cout,</span><br><span class="line">                                            info-&gt;ports,</span><br><span class="line">                                            info-&gt;behaviors,</span><br><span class="line">                                            info-&gt;flavors);</span><br><span class="line"></span><br><span class="line">for(uint32_t i = 0; i &lt; info-&gt;cout; i ++)&#123;</span><br><span class="line">    if(info-&gt;ports[i] != 0 || info-&gt;flavors[i] == THREAD_STATE_NONE)&#123;</span><br><span class="line">        NSLog(@&quot;debugger detected via exception ports (null port)!\n&quot;);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">if (isatty(1)) &#123;</span><br><span class="line">    NSLog(@&quot;Being Debugged isatty&quot;);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">if (!ioctl(1, TIOCGWINSZ)) &#123;</span><br><span class="line">    NSLog(@&quot;Being Debugged ioctl&quot;);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h4 id="Ideas-from-jmpews"><a href="#Ideas-from-jmpews" class="headerlink" title="Ideas from @jmpews"></a>Ideas from @jmpews</h4><p>Register Custom EH Pad and intentionally throw exceptions,they should be handled by our very own block.</p>
+
+      
+    </div>
+
+    
+      
+      
+
+  <div class="post-copyright">
+    <p class="copyright-item">
+      <span>Author: </span>
+      <a href="http://hikariproject.github.io">NavilleZhang</a>
+    </p>
+    <p class="copyright-item">
+      <span>Link: </span>
+      <a href="http://hikariproject.github.io/2017/12/21/AntiDebuggingImplementation/">http://hikariproject.github.io/2017/12/21/AntiDebuggingImplementation/</a>
+    </p>
+    <p class="copyright-item">
+      <span>License: </span>
+      
+      <a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/" target="_blank">Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)</a>
+    </p>
+  </div>
+
+
+
+      
+      
+    
+
+    
+      <footer class="post-footer">
+        
+        
+        
+  <nav class="post-nav">
+    
+    
+      <a class="next" href="/2017/12/21/SymbolObfuscationImplementationNotes/">
+        <span class="next-text nav-default">FunctionCallSite/Symbol Obfuscation Implementation Notes</span>
+        <span class="prev-text nav-mobile">Next</span>
+        <i class="iconfont icon-right"></i>
+      </a>
+    
+  </nav>
+
+      </footer>
+    
+
+  </article>
+
+
+          </div>
+          
+  <div class="comments" id="comments">
+    
+      <div id="disqus_thread">
+        <noscript>
+          Please enable JavaScript to view the
+          <a href="//disqus.com/?ref_noscript">comments powered by Disqus.</a>
+        </noscript>
+      </div>
+    
+  </div>
+
+
+        </div>
+      </main>
+
+      <footer id="footer" class="footer">
+
+  <div class="social-links">
+    
+      
+        
+          <a href="mailto:admin@mayuyu.io" class="iconfont icon-email" title="email"></a>
+        
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+        
+          <a href="https://github.com/HikariProject/" class="iconfont icon-github" title="github"></a>
+        
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+    
+    
+      
+      <a href="/atom.xml" class="iconfont icon-rss" title="rss"></a>
+    
+  </div>
+
+
+<div class="copyright">
+  <span class="power-by">
+    Powered by <a class="hexo-link" href="https://hexo.io/">Hexo</a>
+  </span>
+  <span class="division">|</span>
+  <span class="theme-info">
+    Theme - 
+    <a class="theme-link" href="https://github.com/ahonn/hexo-theme-even">Even</a>
+  </span>
+
+  <span class="copyright-year">
+    
+    &copy; 
+    
+    2017
+
+    <span class="heart">
+      <i class="iconfont icon-heart"></i>
+    </span>
+    <span class="author">NavilleZhang</span>
+  </span>
+</div>
+
+      </footer>
+
+      <div class="back-to-top" id="back-to-top">
+        <i class="iconfont icon-up"></i>
+      </div>
+    </div>
+
+    
+  
+  <script type="text/javascript">
+    var disqus_config = function () {
+        this.page.url = 'http://hikariproject.github.io/2017/12/21/AntiDebuggingImplementation/';
+        this.page.identifier = '2017/12/21/AntiDebuggingImplementation/';
+        this.page.title = 'AntiDebugging Implementation Notes';
+    };
+    (function() {
+    var d = document, s = d.createElement('script');
+
+    s.src = '//hikari-obfuscator.disqus.com/embed.js';
+
+    s.setAttribute('data-timestamp', +new Date());
+    (d.head || d.body).appendChild(s);
+    })();  
+  </script>
+
+
+
+
+    
+
+
+
+
+  
+    <script type="text/javascript" src="/lib/jquery/jquery-3.1.1.min.js"></script>
+  
+
+  
+    <script type="text/javascript" src="/lib/slideout/slideout.js"></script>
+  
+
+  
+
+
+    <script type="text/javascript" src="/js/src/even.js?v=2.6.0"></script>
+<script type="text/javascript" src="/js/src/bootstrap.js?v=2.6.0"></script>
+
+  </body>
+</html>

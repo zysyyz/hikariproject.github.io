@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    
+<meta charset="UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+
+
+<meta http-equiv="Cache-Control" content="no-transform" />
+<meta http-equiv="Cache-Control" content="no-siteapp" />
+
+<meta name="theme-color" content="#f8f5ec" />
+<meta name="msapplication-navbutton-color" content="#f8f5ec">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="#f8f5ec">
+
+
+
+  <meta name="description" content="Anti class-dump Implementation Notes"/>
+
+
+
+
+  <meta name="keywords" content="LLVM, Hikari" />
+
+
+
+
+
+
+
+
+
+
+  <link rel="alternate" href="/default" title="Hikari">
+
+
+
+
+  <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=2.6.0" />
+
+
+
+<link rel="canonical" href="http://hikariproject.github.io/2017/12/21/AntiClassDumpImplementationNotes/"/>
+
+
+<link rel="stylesheet" type="text/css" href="/css/style.css?v=2.6.0" />
+
+
+
+
+
+
+  
+
+
+
+  <script id="baidu_push">
+(function(){
+    var bp = document.createElement('script');
+    var curProtocol = window.location.protocol.split(':')[0];
+    if (curProtocol === 'https') {
+        bp.src = 'https://zz.bdstatic.com/linksubmit/push.js';
+    }
+    else {
+        bp.src = 'http://push.zhanzhang.baidu.com/push.js';
+    }
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(bp, s);
+})();
+</script>
+
+
+
+
+
+
+
+
+
+    <title> Anti class-dump Implementation Notes - Hikari </title>
+  </head>
+
+  <body><div id="mobile-navbar" class="mobile-navbar">
+  <div class="mobile-header-logo">
+    <a href="/." class="logo">Hikari</a>
+  </div>
+  <div class="mobile-navbar-icon">
+    <span></span>
+    <span></span>
+    <span></span>
+  </div>
+</div>
+
+<nav id="mobile-menu" class="mobile-menu slideout-menu">
+  <ul class="mobile-menu-list">
+    
+      <a href="/">
+        <li class="mobile-menu-item">
+          
+          
+            Home
+          
+        </li>
+      </a>
+    
+      <a href="/archives/">
+        <li class="mobile-menu-item">
+          
+          
+            Archives
+          
+        </li>
+      </a>
+    
+  </ul>
+</nav>
+
+    <div class="container" id="mobile-panel">
+      <header id="header" class="header"><div class="logo-wrapper">
+  <a href="/." class="logo">Hikari</a>
+</div>
+
+<nav class="site-navbar">
+  
+    <ul id="menu" class="menu">
+      
+        <li class="menu-item">
+          <a class="menu-item-link" href="/">
+            
+            
+              Home
+            
+          </a>
+        </li>
+      
+        <li class="menu-item">
+          <a class="menu-item-link" href="/archives/">
+            
+            
+              Archives
+            
+          </a>
+        </li>
+      
+    </ul>
+  
+</nav>
+
+      </header>
+
+      <main id="main" class="main">
+        <div class="content-wrapper">
+          <div id="content" class="content">
+            
+  
+  <article class="post">
+    <header class="post-header">
+      <h1 class="post-title">
+        
+          Anti class-dump Implementation Notes
+        
+      </h1>
+
+      <div class="post-meta">
+        <span class="post-time">
+          2017-12-21
+        </span>
+        
+        
+      </div>
+    </header>
+
+    
+    
+  <div class="post-toc" id="post-toc">
+    <h2 class="post-toc-title">Contents</h2>
+    <div class="post-toc-content">
+      <ol class="toc"><li class="toc-item toc-level-3"><a class="toc-link" href="#Dependency-Resolving"><span class="toc-text">Dependency Resolving</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Platform-Dependent-Data-Sizes"><span class="toc-text">Platform-Dependent Data Sizes</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Handle-IvarLayout"><span class="toc-text">Handle IvarLayout</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Provide-Mode-Switching"><span class="toc-text">Provide Mode Switching</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#Fix-ro-flags"><span class="toc-text">Fix ro_flags</span></a>
+    </div>
+  </div>
+
+
+    <div class="post-content">
+      
+        <p>The core idea of acd is to extract ObjC class informations and create everything at a program-controlled stage instead of letting libObjC do the initialization for us.</p>
+<h3 id="Dependency-Resolving"><a href="#Dependency-Resolving" class="headerlink" title="Dependency Resolving"></a>Dependency Resolving</h3><p>OOP languages have a core concept called “Classes”, ObjC is no difference.For our transform to work as intended, we need to create classes strictly following the dependency graph.And that means:  </p>
+<ul>
+<li>Classes that don’t have a base class should be created first.</li>
+<li>Following classes that has external dependency, which can be distinguished at IR level by checking if the BaseClass is definition or declaration.This is done using <code>GlobalVariable::hasInitializer ()</code></li>
+<li>Loop through the remaining classes using a deque.Which we repeat the following process until the deque is empty:<ul>
+<li>Pop the front-most class</li>
+<li>Check if this class’s dependency is available<ul>
+<li>If available,process the class</li>
+<li>Otherwise,push the class to the back of the queue</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>The same also applies for protocols. Note we are running our pass at LTO stage to make sure local classes are sorted correctly</p>
+<h2 id="Platform-Dependent-Data-Sizes"><a href="#Platform-Dependent-Data-Sizes" class="headerlink" title="Platform-Dependent Data Sizes"></a>Platform-Dependent Data Sizes</h2><p>Certain ObjC Runtime API uses type like <code>size_t</code> which size is platform dependent.<br>Critical DataStructures like <code>class_ro_t</code> has platform specific definition:</p>
+<figure class="highlight c++"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="class"><span class="keyword">struct</span> <span class="title">class_ro_t</span> &#123;</span></span><br><span class="line">    <span class="keyword">uint32_t</span> flags;</span><br><span class="line">    <span class="keyword">uint32_t</span> instanceStart;</span><br><span class="line">    <span class="keyword">uint32_t</span> instanceSize;</span><br><span class="line"><span class="meta">#<span class="meta-keyword">ifdef</span> __LP64__</span></span><br><span class="line">    <span class="keyword">uint32_t</span> reserved;</span><br><span class="line"><span class="meta">#<span class="meta-keyword">endif</span></span></span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">uint8_t</span> * ivarLayout;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">char</span> * name;</span><br><span class="line">    <span class="keyword">method_list_t</span> * baseMethodList;</span><br><span class="line">    <span class="keyword">protocol_list_t</span> * baseProtocols;</span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">ivar_list_t</span> * ivars;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">const</span> <span class="keyword">uint8_t</span> * weakIvarLayout;</span><br><span class="line">    <span class="keyword">property_list_t</span> *baseProperties;</span><br><span class="line">    <span class="keyword">method_list_t</span> *baseMethods() <span class="keyword">const</span> &#123;</span><br><span class="line">        <span class="keyword">return</span> baseMethodList;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<p>These issues are resolved by parsing Module’s Triple.</p>
+<h2 id="Handle-IvarLayout"><a href="#Handle-IvarLayout" class="headerlink" title="Handle IvarLayout"></a>Handle IvarLayout</h2><p>  Just add <code>class_setIvarLayout</code> and <code>class_setWeakIvarLayout</code> calls</p>
+<h2 id="Provide-Mode-Switching"><a href="#Provide-Mode-Switching" class="headerlink" title="Provide Mode Switching"></a>Provide Mode Switching</h2><p>  Full LTO is not always possible. As such we should provide three modes:</p>
+<ul>
+<li>Injecting at global initializers</li>
+<li>Replace original metadata_ro_t and leave only <code>+initialize</code>,perform method adding there. Ivars and props are unchanged</li>
+<li>User Custom Initializing using <code>__attribute__((annotate(&quot;FLAGS&quot;)))</code> , which is converted to <code>llvm.global.annotations</code> in <code>llvm.metadata</code></li>
+</ul>
+<h2 id="Fix-ro-flags"><a href="#Fix-ro-flags" class="headerlink" title="Fix ro_flags"></a>Fix ro_flags</h2><p>Google <code>RO_IS_ARR</code>, we need to add instructions to copy flags over after creating class</p>
+<p>T.B.C</p>
+
+      
+    </div>
+
+    
+      
+      
+
+  <div class="post-copyright">
+    <p class="copyright-item">
+      <span>Author: </span>
+      <a href="http://hikariproject.github.io">NavilleZhang</a>
+    </p>
+    <p class="copyright-item">
+      <span>Link: </span>
+      <a href="http://hikariproject.github.io/2017/12/21/AntiClassDumpImplementationNotes/">http://hikariproject.github.io/2017/12/21/AntiClassDumpImplementationNotes/</a>
+    </p>
+    <p class="copyright-item">
+      <span>License: </span>
+      
+      <a rel="license" href="http://creativecommons.org/licenses/by-nc/4.0/" target="_blank">Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)</a>
+    </p>
+  </div>
+
+
+
+      
+      
+    
+
+    
+      <footer class="post-footer">
+        
+          <div class="post-tags">
+            
+              <a href="/tags/LLVM/">LLVM</a>
+            
+          </div>
+        
+        
+        
+  <nav class="post-nav">
+    
+      <a class="prev" href="/2017/12/21/SymbolObfuscationImplementationNotes/">
+        <i class="iconfont icon-left"></i>
+        <span class="prev-text nav-default">FunctionCallSite/Symbol Obfuscation Implementation Notes</span>
+        <span class="prev-text nav-mobile">Prev</span>
+      </a>
+    
+    
+  </nav>
+
+      </footer>
+    
+
+  </article>
+
+
+          </div>
+          
+  <div class="comments" id="comments">
+    
+      <div id="disqus_thread">
+        <noscript>
+          Please enable JavaScript to view the
+          <a href="//disqus.com/?ref_noscript">comments powered by Disqus.</a>
+        </noscript>
+      </div>
+    
+  </div>
+
+
+        </div>
+      </main>
+
+      <footer id="footer" class="footer">
+
+  <div class="social-links">
+    
+      
+        
+          <a href="mailto:admin@mayuyu.io" class="iconfont icon-email" title="email"></a>
+        
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+        
+          <a href="https://github.com/HikariProject/" class="iconfont icon-github" title="github"></a>
+        
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+      
+    
+    
+    
+      
+      <a href="/atom.xml" class="iconfont icon-rss" title="rss"></a>
+    
+  </div>
+
+
+<div class="copyright">
+  <span class="power-by">
+    Powered by <a class="hexo-link" href="https://hexo.io/">Hexo</a>
+  </span>
+  <span class="division">|</span>
+  <span class="theme-info">
+    Theme - 
+    <a class="theme-link" href="https://github.com/ahonn/hexo-theme-even">Even</a>
+  </span>
+
+  <span class="copyright-year">
+    
+    &copy; 
+    
+    2017
+
+    <span class="heart">
+      <i class="iconfont icon-heart"></i>
+    </span>
+    <span class="author">NavilleZhang</span>
+  </span>
+</div>
+
+      </footer>
+
+      <div class="back-to-top" id="back-to-top">
+        <i class="iconfont icon-up"></i>
+      </div>
+    </div>
+
+    
+  
+  <script type="text/javascript">
+    var disqus_config = function () {
+        this.page.url = 'http://hikariproject.github.io/2017/12/21/AntiClassDumpImplementationNotes/';
+        this.page.identifier = '2017/12/21/AntiClassDumpImplementationNotes/';
+        this.page.title = 'Anti class-dump Implementation Notes';
+    };
+    (function() {
+    var d = document, s = d.createElement('script');
+
+    s.src = '//hikari-obfuscator.disqus.com/embed.js';
+
+    s.setAttribute('data-timestamp', +new Date());
+    (d.head || d.body).appendChild(s);
+    })();  
+  </script>
+
+
+
+
+    
+
+
+
+
+  
+    <script type="text/javascript" src="/lib/jquery/jquery-3.1.1.min.js"></script>
+  
+
+  
+    <script type="text/javascript" src="/lib/slideout/slideout.js"></script>
+  
+
+  
+
+
+    <script type="text/javascript" src="/js/src/even.js?v=2.6.0"></script>
+<script type="text/javascript" src="/js/src/bootstrap.js?v=2.6.0"></script>
+
+  </body>
+</html>
